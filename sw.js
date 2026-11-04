@@ -1,5 +1,5 @@
-const V = 'estante-v1';
-const CORE = ['./', 'index.html', 'manifest.json', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'pdf.min.js', 'pdf.worker.min.js'];
+const V = 'estante-v2';
+const CORE = ['./', 'index.html', 'manifest.json', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'pdf.min.js', 'pdf.worker.min.js', 'jszip.min.js'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(V).then(c => c.addAll(CORE)).then(() => self.skipWaiting()));
 });

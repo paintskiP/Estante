@@ -61,6 +61,11 @@ figure{margin:0;width:112px;flex:none;cursor:pointer}
 #reader.hide .t{transform:translateY(-100%)}#reader.hide .b{transform:translateY(100%)}
 #pg{font-size:13px;color:var(--muted);min-width:72px;text-align:right}
 #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:90;background:var(--ink);color:var(--bg);padding:8px 16px;border-radius:8px;font-size:14px}
+.sheet{position:absolute;inset:0;display:none;overflow:hidden;background:var(--surface);color:var(--ink);font-family:Georgia,"Iowan Old Style",serif;line-height:1.55;backface-visibility:hidden}
+.cols{position:absolute;column-fill:auto;text-align:justify;hyphens:auto;overflow-wrap:break-word}
+.cols *{max-width:100%}.cols p{margin:0 0 .7em}.cols h1,.cols h2,.cols h3{font-size:1.25em;line-height:1.25;margin:.6em 0}
+.cols img,.cols svg{display:block;max-width:100%;max-height:100%;margin:0 auto;object-fit:contain}.cols a{color:inherit;text-decoration:none}
+#eleaf{transform-origin:left center}#book.ep{filter:none}
 @media (prefers-reduced-motion:reduce){.cf,.rbar{transition:none}}
 </style>
 </head>
@@ -69,18 +74,21 @@ figure{margin:0;width:112px;flex:none;cursor:pointer}
   <h1>Estante</h1>
   <div class="seg"><button data-v="shelves">Estantes</button><button data-v="flow">Cover Flow</button></div>
   <button id="ns">Nova estante</button>
+  <button id="bk" title="Salvar um backup da biblioteca">Exportar backup</button><button id="rs" title="Restaurar um backup">Restaurar</button>
   <button id="th" title="Alternar tema">Tema</button>
 </header>
 <div id="nsb" hidden><input id="nsn" placeholder="Nome da estante" maxlength="40"><button id="nsok">Criar estante</button></div>
 <main id="main"></main>
-<input type="file" id="file" accept="application/pdf" multiple hidden>
+<input type="file" id="file" accept="application/pdf,application/epub+zip,.pdf,.epub" multiple hidden>
+<input type="file" id="rsf" accept=".json,application/json" hidden>
 <section id="reader" hidden>
   <div class="rbar t"><button id="back">Biblioteca</button><span id="rt"></span><button id="rth">Tema</button></div>
-  <div id="stage"><div id="book"><canvas id="base"></canvas><div id="shade"></div><canvas id="leaf"></canvas></div></div>
+  <div id="stage"><div id="book"><canvas id="base"></canvas><div class="sheet" id="ebase"><div class="cols"></div></div><div id="shade"></div><canvas id="leaf"></canvas><div class="sheet" id="eleaf"><div class="cols"></div></div></div></div>
   <div class="rbar b"><input type="range" id="rng" min="1" value="1" aria-label="Página"><span id="pg"></span></div>
 </section>
 <div id="toast" hidden></div>
 <script src="pdf.min.js"></script>
+<script src="jszip.min.js"></script>
 <script>
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 const esc=s=>s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -108,11 +116,12 @@ async function importFiles(files,shelf){
   for(const f of files){
     const buf=await f.arrayBuffer(),id='b'+Date.now()+Math.random().toString(36).slice(2,6);
     try{
-      const pdf=await pdfjsLib.getDocument({data:buf.slice(0)}).promise,cover=await thumb(pdf);
+      let bk;
+      if(/\.epub$/i.test(f.name)){const e=await readEpub(buf);bk={id,type:'epub',title:e.title||f.name.replace(/\.epub$/i,''),shelf,page:1,pages:100,cover:await epCover(e)}}
+      else{const pdf=await pdfjsLib.getDocument({data:buf.slice(0)}).promise;bk={id,title:f.name.replace(/\.pdf$/i,''),shelf,page:1,pages:pdf.numPages,cover:await thumb(pdf)};pdf.destroy()}
       mem[id]=buf;try{await dbp('put',buf,id)}catch(e){}
-      S.books.push({id,title:f.name.replace(/\.pdf$/i,''),shelf,page:1,pages:pdf.numPages,cover});
-      pdf.destroy();
-    }catch(e){toast('Não foi possível abrir “'+f.name+'”. Verifique se o arquivo é um PDF válido.')}
+      S.books.push(bk);
+    }catch(e){toast('Não foi possível abrir “'+f.name+'”. Verifique se é um PDF ou EPUB válido.')}
   }
   save();render();
 }
@@ -124,7 +133,7 @@ function render(){
   const m=$('#main');
   if(S.view==='shelves'){
     m.innerHTML=S.shelves.map(sh=>{const bs=S.books.filter(b=>b.shelf===sh.id);
-      return `<section class="shelf"><div class="sh-h"><h2>${esc(sh.name)}</h2><span>${bs.length}</span><button data-add="${sh.id}">Importar PDF</button>${S.shelves.length>1?`<button data-del="${sh.id}">Remover</button>`:''}</div><div class="row">${bs.map(b=>`<figure data-open="${b.id}" title="${esc(b.title)}"><div class="cv"><img src="${b.cover}" alt=""><b>${esc(b.title)}</b><i style="width:${Math.round(b.page/b.pages*100)}%"></i></div></figure>`).join('')||'<p class="empty">Esta estante está vazia. Importe um PDF para começar.</p>'}</div><div class="board"></div></section>`}).join('');
+      return `<section class="shelf"><div class="sh-h"><h2>${esc(sh.name)}</h2><span>${bs.length}</span><button data-add="${sh.id}">Importar PDF ou EPUB</button>${S.shelves.length>1?`<button data-del="${sh.id}">Remover</button>`:''}</div><div class="row">${bs.map(b=>`<figure data-open="${b.id}" title="${esc(b.title)}"><div class="cv"><img src="${b.cover}" alt=""><b>${esc(b.title)}</b><i style="width:${Math.round(b.page/b.pages*100)}%"></i></div></figure>`).join('')||'<p class="empty">Esta estante está vazia. Importe um PDF para começar.</p>'}</div><div class="board"></div></section>`}).join('');
   }else flowView();
 }
 $('#main').onclick=e=>{const t=e.target;
@@ -142,7 +151,7 @@ function flowView(){
   list=S.books.filter(b=>S.filter==='all'||b.shelf===S.filter);
   S.idx=Math.max(0,Math.min(S.idx,list.length-1));
   const addTo=S.filter==='all'?S.shelves[0].id:S.filter;
-  $('#main').innerHTML=`<div class="flowbar"><select id="flt"><option value="all">Todas as estantes</option>${S.shelves.map(s=>`<option value="${s.id}"${S.filter===s.id?' selected':''}>${esc(s.name)}</option>`).join('')}</select><button data-add="${addTo}">Importar PDF</button></div>`+
+  $('#main').innerHTML=`<div class="flowbar"><select id="flt"><option value="all">Todas as estantes</option>${S.shelves.map(s=>`<option value="${s.id}"${S.filter===s.id?' selected':''}>${esc(s.name)}</option>`).join('')}</select><button data-add="${addTo}">Importar PDF ou EPUB</button></div>`+
   (list.length?`<div id="flow">${list.map(b=>`<div class="cf"><img src="${b.cover}" draggable="false" alt=""></div>`).join('')}</div><div class="info"><h3 id="it"></h3><p id="ip"></p><div class="ia"><button id="read">Ler</button><select id="mv" aria-label="Mover para a estante"></select><button id="rm">Remover</button></div></div>`:'<p class="empty">Nenhum livro por aqui. Importe um PDF para ver a capa em destaque.</p>');
   $('#flt').onchange=e=>{S.filter=e.target.value;S.idx=0;save();render()};
   if(!list.length)return;
@@ -155,7 +164,7 @@ function flowView(){
 function lay(f){$$('.cf').forEach((el,i)=>{const d=i-f,a=Math.abs(d),s=Math.sign(d),n=Math.min(a,1),r=Math.max(a-1,0);
   el.style.transform=`translate(-50%,-50%) translateX(${s*(n*125+r*55)}px) translateZ(${-(n*140+r*40)}px) rotateY(${-s*n*58}deg)`;
   el.style.zIndex=100-Math.round(a*2);el.style.opacity=Math.max(0,Math.min(1,4-a))})}
-function info(){const b=list[S.idx];if(!b)return;$('#it').textContent=b.title;$('#ip').textContent=`Página ${b.page} de ${b.pages} · ${Math.round(b.page/b.pages*100)}% lido`;$('#mv').innerHTML=S.shelves.map(s=>`<option value="${s.id}"${s.id===b.shelf?' selected':''}>Mover para ${esc(s.name)}</option>`).join('')}
+function info(){const b=list[S.idx];if(!b)return;$('#it').textContent=b.title;$('#ip').textContent=b.type==='epub'?`EPUB · ${b.page}% lido`:`Página ${b.page} de ${b.pages} · ${Math.round(b.page/b.pages*100)}% lido`;$('#mv').innerHTML=S.shelves.map(s=>`<option value="${s.id}"${s.id===b.shelf?' selected':''}>Mover para ${esc(s.name)}</option>`).join('')}
 addEventListener('pointermove',e=>{if(!dr)return;const dx=e.clientX-dr.x;dr.m=Math.max(dr.m,Math.abs(dx));dr.p=Math.max(0,Math.min(list.length-1,dr.i-dx/90));lay(dr.p)});
 const endDrag=e=>{if(!dr)return;const d=dr;dr=null;const f=$('#flow');f&&f.classList.remove('drag');
   if(d.m<6){const c=e.target.closest&&e.target.closest('.cf');if(c){const i=$$('.cf').indexOf(c);if(i===S.idx)openBook(list[i].id);else S.idx=i}}else S.idx=Math.round(d.p);
@@ -163,44 +172,123 @@ const endDrag=e=>{if(!dr)return;const d=dr;dr=null;const f=$('#flow');f&&f.class
 addEventListener('pointerup',endDrag);addEventListener('pointercancel',endDrag);
 
 /* leitor */
-let doc=null,cur=null,pageN=1,busy=false,v1=null,bw=0,bh=0;
+let doc=null,eb=null,cur=null,pageN=1,busy=false,v1=null,bw=0,bh=0;
+const N=()=>eb?eb.pgs.length:doc.numPages;
 function fit(){const st=$('#stage'),s=Math.min(st.clientWidth/v1.width,st.clientHeight/v1.height)*.96;bw=Math.round(v1.width*s);bh=Math.round(v1.height*s);const b=$('#book');b.style.width=bw+'px';b.style.height=bh+'px'}
 async function draw(c,n){const p=await doc.getPage(n),v=p.getViewport({scale:1}),r=Math.min(devicePixelRatio||1,2),vp=p.getViewport({scale:Math.min(bw/v.width,bh/v.height)*r});
   c.width=Math.round(bw*r);c.height=Math.round(bh*r);const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);
   await p.render({canvasContext:x,viewport:vp,transform:[1,0,0,1,(c.width-vp.width)/2,(c.height-vp.height)/2]}).promise}
 async function openBook(id){
-  const b=S.books.find(x=>x.id===id);let buf=mem[id];
-  if(!buf){try{buf=await dbp('get',id)}catch(e){}}
-  if(!buf){toast('O arquivo não está mais neste navegador. Remova o livro e importe o PDF novamente.');return}
-  try{doc=await pdfjsLib.getDocument({data:buf.slice(0)}).promise}catch(e){toast('Não foi possível abrir este PDF.');return}
-  cur=b;pageN=Math.min(b.page||1,doc.numPages);v1=(await doc.getPage(1)).getViewport({scale:1});
-  $('#reader').hidden=false;$('#reader').classList.remove('hide');$('#rt').textContent=b.title;$('#rng').max=doc.numPages;
-  fit();await draw($('#base'),pageN);sync();
+  const b=S.books.find(x=>x.id===id),buf=await getBuf(id),E=b&&b.type==='epub';
+  if(!buf){toast('O arquivo não está mais neste navegador. Remova o livro e importe de novo, ou restaure um backup.');return}
+  try{if(E){eb=Object.assign(await readEpub(buf),{h:[],nc:[],pgs:[]});doc=null}else{eb=null;doc=await pdfjsLib.getDocument({data:buf.slice(0)}).promise}}catch(e){toast('Não foi possível abrir este arquivo.');return}
+  cur=b;busy=false;
+  $('#reader').hidden=false;$('#reader').classList.remove('hide');$('#rt').textContent=b.title;$('#book').classList.toggle('ep',E);
+  $('#base').style.display=E?'none':'block';$('#ebase').style.display=E?'block':'none';$('#leaf').style.display=$('#eleaf').style.display='none';
+  delete $('#ebase').dataset.s;delete $('#eleaf').dataset.s;
+  if(E){v1={width:600,height:880};fit();await paginate();pageN=locPage(b.loc);await paintEp($('#ebase'),eb.pgs[pageN-1])}
+  else{pageN=Math.min(b.page||1,doc.numPages);v1=(await doc.getPage(1)).getViewport({scale:1});fit();await draw($('#base'),pageN)}
+  $('#rng').max=N();sync();
 }
-function sync(){$('#pg').textContent=`${pageN} / ${doc.numPages}`;$('#rng').value=pageN;if(cur){cur.page=pageN;save()}}
+function sync(){
+  if(!(doc||eb))return;$('#pg').textContent=`${pageN} / ${N()}`;$('#rng').value=pageN;
+  if(cur){if(eb){const p=eb.pgs[pageN-1];cur.loc={s:p.s,f:p.c/eb.nc[p.s]};cur.page=Math.max(1,Math.round(pageN/N()*100))}else cur.page=pageN;save()}
+}
 async function go(n){
-  if(!doc||busy||n<1||n>doc.numPages||n===pageN)return;busy=true;
-  const fwd=n>pageN,base=$('#base'),leaf=$('#leaf'),shade=$('#shade');
-  if(fwd){leaf.width=base.width;leaf.height=base.height;leaf.getContext('2d').drawImage(base,0,0);leaf.style.display='block';await draw(base,n)}
-  else{await draw(leaf,n);leaf.style.display='block'}
+  if(!(doc||eb)||busy||n<1||n>N()||n===pageN)return;busy=true;
+  const fwd=n>pageN,E=!!eb,base=$(E?'#ebase':'#base'),leaf=$(E?'#eleaf':'#leaf'),shade=$('#shade'),pt=(el,k)=>E?paintEp(el,eb.pgs[k-1]):draw(el,k);
+  if(fwd){if(E)await pt(leaf,pageN);else{leaf.width=base.width;leaf.height=base.height;leaf.getContext('2d').drawImage(base,0,0)}leaf.style.display='block';await pt(base,n)}
+  else{await pt(leaf,n);leaf.style.display='block'}
   const kf=fwd?[{transform:'rotateY(0deg)',filter:'brightness(1)'},{transform:'rotateY(-90deg)',filter:'brightness(.75)'},{transform:'rotateY(-180deg)',filter:'brightness(.75)'}]
               :[{transform:'rotateY(-180deg)',filter:'brightness(.75)'},{transform:'rotateY(-90deg)',filter:'brightness(.75)'},{transform:'rotateY(0deg)',filter:'brightness(1)'}];
   const o={duration:650,easing:'cubic-bezier(.45,.05,.25,1)',fill:'forwards'};
   await Promise.all([leaf.animate(kf,o).finished,shade.animate([{opacity:0},{opacity:1,offset:.5},{opacity:0}],{duration:650}).finished]);
-  if(!fwd)await draw(base,n);
+  if(!fwd)await pt(base,n);
   leaf.getAnimations().forEach(a=>a.cancel());leaf.style.display='none';pageN=n;sync();busy=false;
 }
 let sx=0;const st=$('#stage');
 st.onpointerdown=e=>sx=e.clientX;
 st.onpointerup=e=>{const dx=e.clientX-sx;if(dx<-50)go(pageN+1);else if(dx>50)go(pageN-1);else if(Math.abs(dx)<10){const r=e.clientX/innerWidth;if(r<.3)go(pageN-1);else if(r>.7)go(pageN+1);else $('#reader').classList.toggle('hide')}};
-$('#rng').oninput=e=>{$('#pg').textContent=`${e.target.value} / ${doc.numPages}`};
+$('#rng').oninput=e=>{$('#pg').textContent=`${e.target.value} / ${N()}`};
 $('#rng').onchange=e=>go(+e.target.value);
-function closeReader(){$('#reader').hidden=true;if(doc){doc.destroy();doc=null}cur=null;render()}
+function closeReader(){$('#reader').hidden=true;if(doc){doc.destroy();doc=null}eb=null;cur=null;busy=false;render()}
 $('#back').onclick=closeReader;
 addEventListener('keydown',e=>{
   if(!$('#reader').hidden){if(e.key==='ArrowRight'||e.key==='PageDown'||e.key===' ')go(pageN+1);else if(e.key==='ArrowLeft'||e.key==='PageUp')go(pageN-1);else if(e.key==='Escape')closeReader()}
   else if(S.view==='flow'&&list.length&&!/SELECT|INPUT/.test(document.activeElement.tagName)){if(e.key==='ArrowRight')S.idx=Math.min(list.length-1,S.idx+1);else if(e.key==='ArrowLeft')S.idx=Math.max(0,S.idx-1);else return;lay(S.idx);info()}});
-let rt;addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(async()=>{if(doc&&!$('#reader').hidden&&!busy){fit();await draw($('#base'),pageN)}},200)});
+let rt;addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(async()=>{if(!(doc||eb)||$('#reader').hidden||busy)return;fit();
+  if(eb){const p=eb.pgs[pageN-1],l={s:p.s,f:p.c/eb.nc[p.s]};await paginate();pageN=locPage(l);await paintEp($('#ebase'),eb.pgs[pageN-1]);$('#rng').max=N();sync()}else await draw($('#base'),pageN)},200)});
+
+/* epub */
+const rp=(b,h)=>decodeURIComponent(new URL(h,'http://x/'+b).pathname.slice(1));
+const decImgs=c=>Promise.all([...c.querySelectorAll('img')].map(i=>i.decode?i.decode().catch(()=>{}):0));
+async function readEpub(buf){
+  const z=await JSZip.loadAsync(buf),tx=async p=>{const f=z.file(p);return f?f.async('string'):''},xm=s=>new DOMParser().parseFromString(s,'application/xml');
+  const op=xm(await tx('META-INF/container.xml')).querySelector('rootfile').getAttribute('full-path'),o=xm(await tx(op)),man={};
+  o.querySelectorAll('manifest > item').forEach(i=>man[i.getAttribute('id')]={h:rp(op,i.getAttribute('href')),t:i.getAttribute('media-type')||'',p:i.getAttribute('properties')||''});
+  const spine=[...o.querySelectorAll('spine > itemref')].map(r=>man[r.getAttribute('idref')]).filter(m=>m&&/html/.test(m.t));
+  if(!spine.length)throw 0;
+  const mc=o.querySelector('meta[name="cover"]'),cover=Object.values(man).find(m=>/cover-image/.test(m.p))||(mc&&man[mc.getAttribute('content')]),t=o.getElementsByTagNameNS('*','title')[0];
+  return{z,man,spine,cover,title:t&&t.textContent.trim()};
+}
+async function epCover(e){
+  const f=e.cover&&e.z.file(e.cover.h);
+  if(f)try{const im=new Image();im.src=URL.createObjectURL(await f.async('blob'));await im.decode();const c=document.createElement('canvas');c.width=260;c.height=Math.round(im.height*260/im.width);c.getContext('2d').drawImage(im,0,0,c.width,c.height);return c.toDataURL('image/jpeg',.75)}catch(_){}
+  const c=document.createElement('canvas');c.width=260;c.height=380;const x=c.getContext('2d');x.fillStyle='#34322e';x.fillRect(0,0,260,380);x.fillStyle='#e9e8e4';x.font='600 24px Georgia,serif';let y=120,l='';
+  for(const w of (e.title||'EPUB').split(' ')){if(x.measureText(l+w).width>210){x.fillText(l,24,y);y+=32;l=''}l+=w+' '}x.fillText(l,24,y);return c.toDataURL('image/jpeg',.8);
+}
+async function chapHTML(i){
+  const m=eb.spine[i],d=new DOMParser().parseFromString(await eb.z.file(m.h).async('string'),'text/html');
+  d.querySelectorAll('script,style,link,title').forEach(e=>e.remove());
+  d.querySelectorAll('[style]').forEach(e=>e.removeAttribute('style'));
+  d.querySelectorAll('img').forEach(e=>{e.removeAttribute('width');e.removeAttribute('height')});
+  for(const im of d.querySelectorAll('img,image')){
+    const a=im.getAttribute('src')||im.getAttribute('xlink:href')||im.getAttribute('href'),f=a&&!/^(data:|https?:)/.test(a)&&eb.z.file(rp(m.h,a));
+    if(f){const u=URL.createObjectURL(await f.async('blob'));im.setAttribute(im.tagName==='IMG'?'src':'href',u);im.setAttribute('xlink:href',u)}
+  }
+  return d.body?d.body.innerHTML:'';
+}
+function setSheet(sh){const p=eb.pad,c=sh.firstChild;sh.style.fontSize=Math.max(15,Math.round(bw/24))+'px';Object.assign(c.style,{left:p+'px',top:p+'px',width:bw-2*p+'px',height:bh-2*p+'px',columnWidth:bw-2*p+'px',columnGap:2*p+'px',transform:''})}
+async function paginate(){
+  toast('Preparando as páginas…');eb.pad=Math.round(bw*.08);eb.pgs=[];[$('#ebase'),$('#eleaf')].forEach(setSheet);
+  const sh=$('#ebase'),c=sh.firstChild;
+  for(let i=0;i<eb.spine.length;i++){
+    if(!eb.h[i])eb.h[i]=await chapHTML(i);
+    c.innerHTML=eb.h[i];await decImgs(c);
+    const n=Math.max(1,Math.round((c.scrollWidth+2*eb.pad)/bw));eb.nc[i]=n;
+    for(let k=0;k<n;k++)eb.pgs.push({s:i,c:k});
+  }
+  delete sh.dataset.s;delete $('#eleaf').dataset.s;$('#toast').hidden=true;
+}
+async function paintEp(sh,p){const c=sh.firstChild;if(sh.dataset.s!=p.s){c.innerHTML=eb.h[p.s];sh.dataset.s=p.s;await decImgs(c)}c.style.transform=`translateX(${-p.c*bw}px)`}
+const locPage=l=>{if(!l||!eb.nc[l.s])return 1;const i=eb.pgs.findIndex(p=>p.s===l.s&&p.c===Math.min(Math.round(l.f*eb.nc[l.s]),eb.nc[l.s]-1));return i<0?1:i+1};
+
+/* backup */
+async function getBuf(id){let b=mem[id];if(!b){try{b=await dbp('get',id)}catch(e){}}return b}
+const b64=buf=>new Promise(r=>{const f=new FileReader();f.onload=()=>r(f.result.split(',')[1]);f.readAsDataURL(new Blob([buf]))});
+async function exportBackup(){
+  toast('Gerando o backup…');
+  const parts=['{"v":1,"shelves":'+JSON.stringify(S.shelves)+',"books":'+JSON.stringify(S.books)+',"files":{'];let first=true;
+  for(const b of S.books){const buf=await getBuf(b.id);if(!buf)continue;parts.push((first?'':',')+JSON.stringify(b.id)+':"'+await b64(buf)+'"');first=false}
+  parts.push('}}');
+  const file=new File(parts,'estante-backup.json',{type:'application/json'});
+  if(navigator.canShare&&navigator.canShare({files:[file]})){try{await navigator.share({files:[file],title:'Backup da Estante'});return}catch(e){if(e.name==='AbortError')return}}
+  const a=document.createElement('a');a.href=URL.createObjectURL(file);a.download=file.name;a.click();toast('Backup salvo na pasta de downloads.');
+}
+async function restoreBackup(f){
+  if(!f)return;
+  try{
+    const d=JSON.parse(await f.text());let n=0;
+    d.shelves.forEach(s=>{if(!S.shelves.some(x=>x.id===s.id))S.shelves.push(s)});
+    for(const b of d.books){
+      if(S.books.some(x=>x.id===b.id)||!d.files[b.id])continue;
+      const buf=Uint8Array.from(atob(d.files[b.id]),c=>c.charCodeAt(0)).buffer;
+      mem[b.id]=buf;try{await dbp('put',buf,b.id)}catch(e){}S.books.push(b);n++;
+    }
+    save();render();toast(n+' livro(s) restaurado(s).');
+  }catch(e){toast('Arquivo de backup inválido.')}
+}
+$('#bk').onclick=exportBackup;$('#rs').onclick=()=>$('#rsf').click();$('#rsf').onchange=e=>{restoreBackup(e.target.files[0]);e.target.value=''};
 
 applyTheme();render();
 </script>
