@@ -66,6 +66,8 @@ figure{margin:0;width:112px;flex:none;cursor:pointer}
 .cols *{max-width:100%}.cols p{margin:0 0 .7em}.cols h1,.cols h2,.cols h3{font-size:1.25em;line-height:1.25;margin:.6em 0}
 .cols img,.cols svg{display:block;max-width:100%;max-height:100%;margin:0 auto;object-fit:contain}.cols a{color:inherit;text-decoration:none}
 #eleaf{transform-origin:left center}#book.ep{filter:none}
+.cv .out{position:absolute;top:4px;right:4px;z-index:2;width:26px;height:26px;padding:0;border:0;border-radius:50%;background:rgba(0,0,0,.62);color:#fff;font-size:16px;line-height:26px;text-align:center}
+figure .del{display:block;width:100%;margin-top:6px;padding:3px 6px;font-size:12px}
 @media (prefers-reduced-motion:reduce){.cf,.rbar{transition:none}}
 </style>
 </head>
@@ -132,14 +134,21 @@ function render(){
   $$('.seg button').forEach(b=>b.classList.toggle('on',b.dataset.v===S.view));
   const m=$('#main');
   if(S.view==='shelves'){
+    const cv=(b,x='')=>`<div class="cv"><img src="${b.cover}" alt=""><b>${esc(b.title)}</b><i style="width:${Math.round(b.page/b.pages*100)}%"></i>${x}</div>`,
+      lo=S.books.filter(b=>!S.shelves.some(s=>s.id===b.shelf));
     m.innerHTML=S.shelves.map(sh=>{const bs=S.books.filter(b=>b.shelf===sh.id);
-      return `<section class="shelf"><div class="sh-h"><h2>${esc(sh.name)}</h2><span>${bs.length}</span><button data-add="${sh.id}">Importar PDF ou EPUB</button>${S.shelves.length>1?`<button data-del="${sh.id}">Remover</button>`:''}</div><div class="row">${bs.map(b=>`<figure data-open="${b.id}" title="${esc(b.title)}"><div class="cv"><img src="${b.cover}" alt=""><b>${esc(b.title)}</b><i style="width:${Math.round(b.page/b.pages*100)}%"></i></div></figure>`).join('')||'<p class="empty">Esta estante está vazia. Importe um PDF para começar.</p>'}</div><div class="board"></div></section>`}).join('');
+      return `<section class="shelf"><div class="sh-h"><h2>${esc(sh.name)}</h2><span>${bs.length}</span><button data-add="${sh.id}">Importar PDF ou EPUB</button>${S.shelves.length>1?`<button data-del="${sh.id}">Remover</button>`:''}</div><div class="row">${bs.map(b=>`<figure data-open="${b.id}" title="${esc(b.title)}">${cv(b,`<button class="out" data-out="${b.id}" title="Tirar da estante" aria-label="Tirar da estante">×</button>`)}</figure>`).join('')||'<p class="empty">Esta estante está vazia. Importe um PDF para começar.</p>'}</div><div class="board"></div></section>`}).join('')
+    +(lo.length?`<section class="shelf"><div class="sh-h"><h2>Sem estante</h2><span>${lo.length}</span></div><div class="row">${lo.map(b=>`<figure data-open="${b.id}" title="${esc(b.title)}">${cv(b)}<select class="del" data-mvl="${b.id}" aria-label="Colocar em uma estante"><option value="">Colocar em…</option>${S.shelves.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select><button class="del" data-rmb="${b.id}">Excluir</button></figure>`).join('')}</div></section>`:'');
   }else flowView();
 }
 $('#main').onclick=e=>{const t=e.target;
   if(t.dataset.add){target=t.dataset.add;$('#file').click()}
+  else if(t.dataset.out){const b=S.books.find(x=>x.id===t.dataset.out);b.shelf=null;save();render();toast('O livro foi para “Sem estante”.')}
+  else if(t.dataset.rmb)arm(t,()=>{const b=S.books.find(x=>x.id===t.dataset.rmb);S.books=S.books.filter(x=>x!==b);delete mem[b.id];dbp('delete',b.id).catch(()=>{});save();render()});
   else if(t.dataset.del)arm(t,()=>{const id=t.dataset.del,to=S.shelves.find(s=>s.id!==id).id;S.books.forEach(b=>{if(b.shelf===id)b.shelf=to});S.shelves=S.shelves.filter(s=>s.id!==id);if(S.filter===id)S.filter='all';save();render()});
+  else if(t.dataset.mvl){}
   else{const f=t.closest('[data-open]');if(f)openBook(f.dataset.open)}};
+$('#main').onchange=e=>{const t=e.target,b=t.dataset.mvl&&S.books.find(x=>x.id===t.dataset.mvl);if(b&&t.value){b.shelf=t.value;save();render()}};
 $$('.seg button').forEach(b=>b.onclick=()=>{S.view=b.dataset.v;save();render()});
 $('#ns').onclick=()=>{$('#nsb').hidden=!$('#nsb').hidden;$('#nsn').focus()};
 const mk=()=>{const n=$('#nsn').value.trim();if(!n)return;S.shelves.push({id:'s'+Date.now(),name:n});$('#nsn').value='';$('#nsb').hidden=true;save();render()};
@@ -148,11 +157,11 @@ $('#nsok').onclick=mk;$('#nsn').onkeydown=e=>{if(e.key==='Enter')mk()};
 /* cover flow */
 let list=[],dr=null;
 function flowView(){
-  list=S.books.filter(b=>S.filter==='all'||b.shelf===S.filter);
+  list=S.books.filter(b=>S.filter==='all'||(S.filter==='none'?!S.shelves.some(s=>s.id===b.shelf):b.shelf===S.filter));
   S.idx=Math.max(0,Math.min(S.idx,list.length-1));
-  const addTo=S.filter==='all'?S.shelves[0].id:S.filter;
-  $('#main').innerHTML=`<div class="flowbar"><select id="flt"><option value="all">Todas as estantes</option>${S.shelves.map(s=>`<option value="${s.id}"${S.filter===s.id?' selected':''}>${esc(s.name)}</option>`).join('')}</select><button data-add="${addTo}">Importar PDF ou EPUB</button></div>`+
-  (list.length?`<div id="flow">${list.map(b=>`<div class="cf"><img src="${b.cover}" draggable="false" alt=""></div>`).join('')}</div><div class="info"><h3 id="it"></h3><p id="ip"></p><div class="ia"><button id="read">Ler</button><select id="mv" aria-label="Mover para a estante"></select><button id="rm">Remover</button></div></div>`:'<p class="empty">Nenhum livro por aqui. Importe um PDF para ver a capa em destaque.</p>');
+  const addTo=S.shelves.some(s=>s.id===S.filter)?S.filter:S.shelves[0].id;
+  $('#main').innerHTML=`<div class="flowbar"><select id="flt"><option value="all">Todas as estantes</option><option value="none"${S.filter==='none'?' selected':''}>Sem estante</option>${S.shelves.map(s=>`<option value="${s.id}"${S.filter===s.id?' selected':''}>${esc(s.name)}</option>`).join('')}</select><button data-add="${addTo}">Importar PDF ou EPUB</button></div>`+
+  (list.length?`<div id="flow">${list.map(b=>`<div class="cf"><img src="${b.cover}" draggable="false" alt=""></div>`).join('')}</div><div class="info"><h3 id="it"></h3><p id="ip"></p><div class="ia"><button id="read">Ler</button><select id="mv" aria-label="Mover para a estante"></select><button id="rm">Excluir</button></div></div>`:'<p class="empty">Nenhum livro por aqui. Importe um PDF para ver a capa em destaque.</p>');
   $('#flt').onchange=e=>{S.filter=e.target.value;S.idx=0;save();render()};
   if(!list.length)return;
   lay(S.idx);info();
@@ -164,7 +173,7 @@ function flowView(){
 function lay(f){$$('.cf').forEach((el,i)=>{const d=i-f,a=Math.abs(d),s=Math.sign(d),n=Math.min(a,1),r=Math.max(a-1,0);
   el.style.transform=`translate(-50%,-50%) translateX(${s*(n*125+r*55)}px) translateZ(${-(n*140+r*40)}px) rotateY(${-s*n*58}deg)`;
   el.style.zIndex=100-Math.round(a*2);el.style.opacity=Math.max(0,Math.min(1,4-a))})}
-function info(){const b=list[S.idx];if(!b)return;$('#it').textContent=b.title;$('#ip').textContent=b.type==='epub'?`EPUB · ${b.page}% lido`:`Página ${b.page} de ${b.pages} · ${Math.round(b.page/b.pages*100)}% lido`;$('#mv').innerHTML=S.shelves.map(s=>`<option value="${s.id}"${s.id===b.shelf?' selected':''}>Mover para ${esc(s.name)}</option>`).join('')}
+function info(){const b=list[S.idx];if(!b)return;$('#it').textContent=b.title;$('#ip').textContent=b.type==='epub'?`EPUB · ${b.page}% lido`:`Página ${b.page} de ${b.pages} · ${Math.round(b.page/b.pages*100)}% lido`;$('#mv').innerHTML='<option value=""'+(S.shelves.some(s=>s.id===b.shelf)?'':' selected')+'>Tirar da estante</option>'+S.shelves.map(s=>`<option value="${s.id}"${s.id===b.shelf?' selected':''}>Mover para ${esc(s.name)}</option>`).join('')}
 addEventListener('pointermove',e=>{if(!dr)return;const dx=e.clientX-dr.x;dr.m=Math.max(dr.m,Math.abs(dx));dr.p=Math.max(0,Math.min(list.length-1,dr.i-dx/90));lay(dr.p)});
 const endDrag=e=>{if(!dr)return;const d=dr;dr=null;const f=$('#flow');f&&f.classList.remove('drag');
   if(d.m<6){const c=e.target.closest&&e.target.closest('.cf');if(c){const i=$$('.cf').indexOf(c);if(i===S.idx)openBook(list[i].id);else S.idx=i}}else S.idx=Math.round(d.p);
